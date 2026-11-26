@@ -1,0 +1,31 @@
+# nabu performance overlay
+#
+# Appended to recovery/profile-reference.config before `make olddefconfig`.
+# Every entry is a stock upstream 4.14 option: nothing here patches source code,
+# so vendor modules keep loading and existing features stay intact. If a symbol
+# does not exist on this tree, olddefconfig silently drops it (see
+# out/reference-config.diff in the build artifact).
+
+# --- TCP: BBR + fair queueing (better throughput / lower latency on wifi+lte) ---
+CONFIG_TCP_CONG_BBR=y
+CONFIG_DEFAULT_TCP_CONG="bbr"
+CONFIG_NET_SCH_FQ=y
+CONFIG_NET_SCH_FQ_CODEL=y
+CONFIG_NET_SCH_PIE=y
+
+# --- zram: lz4 (already enabled) + lz4hc for faster swap on 6/8 GB RAM ---
+CONFIG_ZRAM_LZ4_COMPRESS=y
+CONFIG_CRYPTO_LZ4HC=y
+
+# --- block layer: make BFQ available for /sys/block/*/queue/scheduler ---
+# Default stays CFQ, so nothing changes unless the ROM explicitly selects BFQ.
+CONFIG_IOSCHED_BFQ=y
+
+# --- keep the build lean: no debug instrumentation, no size optimisation ---
+CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
+# CONFIG_CC_OPTIMIZE_FOR_SIZE is not set
+# CONFIG_DEBUG_INFO is not set
+# CONFIG_SLUB_DEBUG is not set
+# CONFIG_SCHED_DEBUG is not set
+# CONFIG_FUNCTION_TRACER is not set
+# CONFIG_KPROBES is not set

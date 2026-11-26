@@ -1,0 +1,6 @@
+out/
+ak3/
+kernel/
+*.zip
+*.img
+!docs/*.img

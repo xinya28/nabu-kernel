@@ -1,0 +1,181 @@
+name: nabu-kernel
+
+# Build a 4.14.180 kernel for Xiaomi Pad 5 (nabu) running the
+# HyperOS 3 / Android 16 port (OS3.0.304.0.WNSCNXM).
+#
+# Kernel source : PerezChilli/android_kernel_xiaomi_nabu (HyperOS 3 adaptation)
+# Root          : BakaSU (KernelSU downstream, non-GKI) + SUSFS   [bks branch]
+# Toolchain     : LLVM/Clang + LLD 20.1.8 (same major as the ROM's own build)
+# Output        : AnyKernel3 flashable zip + raw Image + config drift log
+#
+# Why 4.14 and not 4.19: the ROM's /vendor/lib/modules were built for
+# 4.14.180-perf-gde52a0344e18 (SMP preempt mod_unload modversions aarch64).
+# A 4.19 kernel cannot load them. With CONFIG_MODVERSIONS=y the module loader
+# (same_magic()) only compares the tail of the vermagic string, so a 4.14.180
+# kernel with any LOCALVERSION still accepts those modules as long as the
+# symbol CRCs match - which they do when building from the same 4.14.180 base.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_branch:
+        description: "kernel source branch"
+        required: true
+        default: nabu-w-oss-bks
+        type: choice
+        options:
+          - nabu-w-oss-bks    # BakaSU + SUSFS (recommended)
+          - nabu-w-oss-bk     # BakaSU only
+          - nabu-w-oss        # no root
+      localversion:
+        description: "UTS release suffix, e.g. -perf (empty = branch default)"
+        required: false
+        default: "-perf"
+        type: string
+      perf_overlay:
+        description: "apply configs/perf.fragment"
+        required: true
+        default: true
+        type: boolean
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SOURCE_REPO: https://github.com/PerezChilli/android_kernel_xiaomi_nabu.git
+  LLVM_VERSION: "20.1.8"
+
+jobs:
+  build:
+    name: build (${{ inputs.source_branch || 'nabu-w-oss-bks' }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout build repo
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+                      "$AGENT_TOOLSDIRECTORY/CodeQL" || true
+          sudo apt-get clean
+          df -h /
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison flex libssl-dev libelf-dev libncurses-dev \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            git curl xz-utils zip unzip python3 cpio file
+
+      - name: Download LLVM ${{ env.LLVM_VERSION }}
+        run: |
+          set -euo pipefail
+          url="https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/LLVM-${LLVM_VERSION}-Linux-X64.tar.xz"
+          curl -fL --retry 5 --retry-delay 5 -o llvm.tar.xz "$url"
+          mkdir -p "$HOME/llvm"
+          tar -xJf llvm.tar.xz -C "$HOME/llvm" --strip-components=1
+          rm -f llvm.tar.xz
+          "$HOME/llvm/bin/clang" --version
+          "$HOME/llvm/bin/ld.lld" --version
+          echo "LLVM_BIN=$HOME/llvm/bin" >> "$GITHUB_ENV"
+
+      - name: Fetch kernel source
+        run: |
+          set -euo pipefail
+          branch='${{ inputs.source_branch || 'nabu-w-oss-bks' }}'
+          git clone --depth 1 -b "$branch" "$SOURCE_REPO" kernel
+          git -C kernel log -1 --oneline
+          echo "KERNEL_BRANCH=$branch" >> "$GITHUB_ENV"
+          echo "KERNEL_SHA=$(git -C kernel rev-parse --short HEAD)" >> "$GITHUB_ENV"
+
+      - name: Apply config overlay
+        run: |
+          set -euo pipefail
+          cfg=kernel/recovery/profile-reference.config
+          if [ '${{ inputs.perf_overlay }}' != 'false' ]; then
+            printf '\n' >> "$cfg"
+            cat configs/perf.fragment >> "$cfg"
+            echo "::notice::perf overlay applied"
+          fi
+          lv='${{ inputs.localversion }}'
+          [ -n "$lv" ] || lv="-perf"
+          sed -i "s|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION=\"${lv}\"|" "$cfg"
+          grep -E 'CONFIG_LOCALVERSION=|CONFIG_MODVERSIONS=|CONFIG_PREEMPT=|CONFIG_KSU=|CONFIG_KSU_SUSFS=' "$cfg" || true
+
+      - name: Build kernel
+        run: |
+          set -euo pipefail
+          mkdir -p "$PWD/out"
+          export OUT="$PWD/out"
+          export JOBS="$(nproc)"
+          if ! bash kernel/recovery/scripts/build-recovery.sh; then
+            echo "::warning::build failed, retrying with KCFLAGS=-Wno-error=unused-but-set-variable (clang 20 new diagnostics)"
+            KCFLAGS="-Wno-error=unused-but-set-variable" bash kernel/recovery/scripts/build-recovery.sh
+          fi
+          ls -lh out/arch/arm64/boot/
+
+      - name: Extract raw Image (boot partition expects uncompressed Image)
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import zlib
+          data = open("out/arch/arm64/boot/Image.gz-dtb", "rb").read()
+          d = zlib.decompressobj(31)
+          img = d.decompress(data) + d.flush()
+          open("out/Image", "wb").write(img)
+          print("Image bytes :", len(img))
+          print("appended dtb:", len(d.unused_data))
+          print("arm64 magic :", img[0x38:0x3c])
+          assert img[0x38:0x3c] == b"ARMd", "not a valid arm64 Image"
+          PY
+          ls -lh out/Image
+
+      - name: Verify kernel identity
+        run: |
+          set -euo pipefail
+          echo "--- version banner ---"
+          strings out/Image | grep -m1 '^Linux version' || true
+          echo "--- vermagic-relevant config ---"
+          for sym in CONFIG_SMP CONFIG_PREEMPT CONFIG_MODULE_UNLOAD CONFIG_MODVERSIONS CONFIG_LOCALVERSION CONFIG_MODULE_SIG; do
+            grep -E "^${sym}=" out/.config || echo "${sym} not set"
+          done
+          echo "--- root solution ---"
+          grep -E '^CONFIG_KSU' out/.config || echo "CONFIG_KSU not set"
+          echo "--- KSU symbols in System.map ---"
+          grep -c -i 'ksu' out/System.map || true
+          echo "--- config drift (olddefconfig) ---"
+          wc -l out/reference-config.diff
+
+      - name: Package AnyKernel3
+        run: |
+          set -euo pipefail
+          bash scripts/pack-anykernel.sh out/Image "$KERNEL_BRANCH" "$KERNEL_SHA"
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          ( cd out && sha256sum Image *.zip ) | tee out/SHA256SUMS
+          ls -lh out
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nabu-${{ env.KERNEL_BRANCH }}-${{ github.run_number }}
+          path: |
+            out/*.zip
+            out/Image
+            out/SHA256SUMS
+            out/reference-config.diff
+          if-no-files-found: error
+          retention-days: 30
