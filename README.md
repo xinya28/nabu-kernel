@@ -122,15 +122,25 @@ reference-config.diff       # olddefconfig 后的配置漂移，正常应接近�
 **方式 B：TWRP**
 `adb push nabu-kernel-*.zip /sdcard/` → TWRP → Install → 选 zip → 刷完重启。
 
-**方式 C：fastboot（需要自己出 boot.img）**
-本仓库只产出 `Image`，因为 nabu 的 boot.img 里带着 ~96 MB 的 ramdisk，
-必须用**本 ROM 原版 boot.img** 作底包重打包：
+**方式 C：fastboot（用本 ROM 原版 boot.img 重打包，最稳）**
+nabu 的 boot.img 里带着 ~26 MB ramdisk，必须用**本 ROM 原版 boot.img** 作底包。
+仓库自带重打包脚本 `tools/repack_boot.js`，已用你这份 ROM 的 boot.img 做过
+byte-for-byte 往返验证（重打包后与原文件 0 字节差异）：
 
 ```bash
-# 取出 ROM 里的 boot.img（7z 解压 images/boot.img），替换内核后重打包
-# 需要 mkbootimg（Android 11+ header v3）：--header_version 3 --page_size 4096
+# 1) 从 ROM 压缩包取出原版 boot.img
+7z e nabu_XiaomiPad5_OS3.0.304.0.WNSCNXM_16.0.7z 'images/boot.img' -o.
+
+# 2) 把 CI 产出的 Image 换进去（保留 ramdisk/cmdline/header，只改 kernel_size）
+node tools/repack_boot.js boot.img Image boot-new.img
+
+# 3) 刷入
 fastboot flash boot boot-new.img
+fastboot reboot
 ```
+
+脚本只接受 header v3 + 未压缩 arm64 `Image`，输出会补齐到原 boot.img 的 128 MB
+分区大小，`fastboot flash` 和整分区 `dd` 都能用。
 
 ---
 
