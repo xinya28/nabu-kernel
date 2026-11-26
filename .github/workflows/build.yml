@@ -78,7 +78,7 @@ jobs:
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             git curl xz-utils zip unzip python3 cpio file
 
-      - name: Download LLVM ${{ env.LLVM_VERSION }}
+      - name: Download LLVM 20.1.8
         run: |
           set -euo pipefail
           url="https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/LLVM-${LLVM_VERSION}-Linux-X64.tar.xz"
