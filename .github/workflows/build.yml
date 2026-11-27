@@ -153,8 +153,8 @@ jobs:
           grep -q 'proc_create("kallsyms", 0400' kernel/kernel/kallsyms.c || { echo "kallsyms sed did not apply"; exit 1; }
           grep -n 'proc_create("kallsyms"' kernel/kernel/kallsyms.c
           if [ '${{ inputs.autosleep_default }}' != 'false' ]; then
-            git -C kernel apply --verbose "$PWD/patches/0003-nabu-autosleep-gate.patch"
-            grep -q 'CONFIG_PM_AUTOSLEEP' kernel/recovery/profile-reference.config
+            cp patches/nabu_autosleep_gate.c kernel/kernel/power/nabu_autosleep_gate.c
+            ls -l kernel/kernel/power/nabu_autosleep_gate.c
             printf '\nobj-y += nabu_autosleep_gate.o\n' >> kernel/kernel/power/Makefile
             grep -n 'nabu_autosleep_gate' kernel/kernel/power/Makefile
             echo "::notice::screen-gated autosleep enabled"
