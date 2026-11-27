@@ -103,17 +103,22 @@ dmesg | grep -i -E 'nabu-autosleep|PM: suspend|Suspended for'
 如果 `suspend_stats/fail` 在涨，`dmesg` 里会给出失败原因（常见是某个驱动 `-EBUSY`），
 把那段贴出来就能定位到具体 wakelock/driver。
 
-> 插着 USB 调试时 autosleep 的 work 会阻塞在 `pm_get_wakeup_count(block=true)`：
-> USB 持续产生未消费的 wakeup event，内核根本不会尝试挂起（`suspend_stats` 不动）。
-> 这是内核正常行为，所以**验证入睡必须拔掉数据线**。
+> 插着 USB 调试时 USB 事件会不断把设备唤醒：autosleep 仍会尝试挂起，
+> 但很快被 USB/充电事件叫醒，形成"熄屏 → 入睡 → 唤醒 → 再入睡"的循环
+> （`success` 快速增长、单次睡眠很短；屏幕灭着，用户无感）。
+> 想测"能连续睡多久"必须**拔掉数据线**。
 
 ### 设备验证状态（2026-11-27，build #35）
 
 - ✅ 开机不 arm（`autosleep=off`），首个 `UNBLANK` 打印 `display on, disarming autosleep`
 - ✅ 亮屏静置 3 分 20 秒：`success=0 fail=0`，无 `PM: suspend` 记录
 - ✅ 熄屏打印 `display off, arming autosleep`，`autosleep=mem`；点亮后恢复 `off`
-- ⏳ **拔线熄屏后 `success` 增长尚未实测**：本会话无法物理拔线，且测试机同时被另一会话占用
-  （中途被卸载管理器、被重启过），这一步需要人工按第 4 条清单确认。
+- ✅ 熄屏后确实进入 deep suspend：17:53–17:54 期间 `success=14`、`fail=1`
+  （`last_failed_dev=alarmtimer`、`-EBUSY`），dmesg 有 15 条 `PM: suspend entry (deep)`；
+  点亮后立即 `disarming`，回到 `off`
+- ⏳ **纯拔线连续睡眠时长未实测**：本会话无法物理拔线，且测试机同时被另一会话占用
+  （中途被卸载管理器、被重启过）。插 USB 时已能入睡并累计 14 次成功挂起，
+  拔线后预期只会更连续，但仍建议人工按第 4 条清单确认一次。
 
 ## 3. 本次内核相对原厂配置的全部差异
 

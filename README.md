@@ -68,14 +68,18 @@ autosleep 的语义是"没有 wakelock 就立刻挂起"，而该移植 ROM 在�
   dmesg 无任何 `PM: suspend` 记录——亮屏不再有挂起尝试；
 - 按电源键熄屏：打印 `display off, arming autosleep`，`/sys/power/autosleep=mem`；
   再点亮：`display on, disarming autosleep`，回到 `off`；
+- **熄屏后确实进入 deep suspend**：17:53–17:54 熄屏期间 `success=14`、`fail=1`
+  （`last_failed_dev=alarmtimer`、`-EBUSY`，属良性否决），dmesg 有 15 条
+  `PM: suspend entry (deep)` / `suspend exit` 记录；点亮后 `display on, disarming autosleep`，
+  autosleep 立刻回到 `off`；
 - `su -c id` 正常（`context=u:r:ksu:s0`），KSU 模块与内核版本未受影响。
 
-**尚未验证（如实记录）**：
+**尚未验证 / 注意（如实记录）**：
 
-- **拔线熄屏后 `success` 增长**：本会话无法物理拔掉数据线。插着 USB 时 autosleep 的
-  work 会阻塞在 `pm_get_wakeup_count(block=true)`（USB 持续产生未消费的 wakeup event），
-  因此不会尝试挂起，`suspend_stats` 保持 0/0——这与"调试休眠要拔线"的结论一致，
-  但"拔线后确实入睡"这一步仍需人工确认（步骤见下方验证清单第 4 条）。
+- **纯拔线连续睡眠时长**：本会话无法物理拔掉数据线。上面的 14 次挂起是在**插着 USB** 时
+  测到的：USB 事件会不断把设备唤醒，于是形成"熄屏 → 入睡 → 被 USB 唤醒 → 再入睡"的循环
+  （屏幕本来就是灭的，不会闪屏）。**"拔线后连续睡 2 分钟以上"的时长仍需人工确认**，
+  预期会明显优于插线场景。
 - **管理器首页「工作中 Built-in」**：测试期间另一个会话把 `com.resukisu.resukisu`
   从设备上卸载了（本仓库同时被另一会话推送构建），所以这一项本次没有重新截图确认；
   `su` 与模块挂载正常。
@@ -88,16 +92,17 @@ success=11  fail=50  last_failed_dev=alarmtimer  last_failed_errno=-16
 
 `fail` 不是故障，而是**挂起被否决**的次数，`-16` 即 `-EBUSY`（"现在别睡，有东西要跑"）。
 最常见的良性否决是 `alarmtimer`：有即将到期的唤醒定时器时它的 `suspend` 回调就返回 `-EBUSY`。
-插着充电线时 `typec-cc-state-change` / `usbin-uv` / `ssusb` 也会不断叫停，
-所以调试休眠请**拔掉数据线**——USB/ADB 本身会一直持有唤醒源。
+插着充电线时 `typec-cc-state-change` / `usbin-uv` / `ssusb` 等事件会**把设备反复唤醒**，
+表现是熄屏期间 `success` 快速增长、入睡时长很短（屏幕灭着，用户看不到）；
+所以测"能连续睡多久"一定要**拔掉数据线**。
 
 ## 验证清单
 
 1. `su -c id` 返回 `uid=0(root) ... context=u:r:ksu:s0` — ✅ 2026-11-27 已验证
 2. 管理器首页显示「工作中 Built-in」，模块数量与 `/data/adb/modules` 一致 — ⚠️ 本次被另一会话卸载了管理器，未复测
 3. 亮屏放置数分钟：屏幕不闪黑、`suspend_stats` 不增长 — ✅ 3 分 20 秒 0/0
-4. 拔线熄屏数分钟：`success` 增长，`/sys/power/autosleep` 为 `mem` — ⏳ 需要人工拔掉数据线后确认
-   （插着 USB 时内核会正确拒绝挂起，看到 `fail` 增长或完全不尝试都属正常）
+4. 拔线熄屏数分钟：`success` 增长，`/sys/power/autosleep` 为 `mem` — ✅ `success` 增长已验证
+   （插 USB 时 14 次 deep suspend）；⏳ 纯拔线连续睡眠时长待人工确认
 
 验证一律先 `fastboot boot` 临时启动，确认无误再刷写。
 
