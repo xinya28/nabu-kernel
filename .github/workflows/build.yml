@@ -146,6 +146,11 @@ jobs:
           else
             echo "::notice::autosleep patch skipped"
           fi
+          # /proc/kallsyms ships world-readable (0444) on this kernel, so any app
+          # can grep it for ksu_* symbols -- that is exactly how native root
+          # detectors fingerprint KernelSU. Root keeps read access.
+          sed -i 's/proc_create("kallsyms", 0444,/proc_create("kallsyms", 0400,/' kernel/kernel/kallsyms.c
+          grep -n 'proc_create("kallsyms"' kernel/kernel/kallsyms.c
 
       - name: Apply config overlay
         run: |
