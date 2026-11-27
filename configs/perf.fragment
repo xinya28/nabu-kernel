@@ -32,7 +32,14 @@ CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
 # CONFIG_SLUB_DEBUG is not set
 # CONFIG_SCHED_DEBUG is not set
 # CONFIG_FUNCTION_TRACER is not set
-# CONFIG_KPROBES is not set
+# --- KPROBES must stay ON: KernelSU non-GKI builds install their su/ksud hooks
+#     with register_kprobe(). kernel/ksu.c only calls ksu_sucompat_init() and
+#     ksu_ksud_init() under #ifdef CONFIG_KPROBES, so turning this off silently
+#     produces a kernel with no /system/bin/su at all. The overhead is only the
+#     handful of registered probes, not the kprobes framework itself.
+CONFIG_KPROBES=y
+# CONFIG_KPROBES_SANITY_TEST is not set
+# CONFIG_OPTPROBES is not set
 # --- screen-off suspend: expose /sys/power/autosleep so the kernel suspends as
 #     soon as the last wakelock is released, even if the ported ROM's
 #     SystemSuspend/wakeup_count path is broken (CM-4.14 has no autosleep by default)
