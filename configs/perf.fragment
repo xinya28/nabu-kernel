@@ -40,8 +40,6 @@ CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
 CONFIG_KPROBES=y
 # CONFIG_KPROBES_SANITY_TEST is not set
 # CONFIG_OPTPROBES is not set
-# --- screen-off suspend: expose /sys/power/autosleep so the kernel suspends as
-#     soon as the last wakelock is released, even if the ported ROM's
-#     SystemSuspend/wakeup_count path is broken (CM-4.14 has no autosleep by default)
-CONFIG_PM_AUTOSLEEP=y
+# --- screen-off suspend lives in configs/suspend.fragment so that a build with
+#     perf_overlay=false can still get autosleep without any tuning.
 # CONFIG_PM_WAKELOCKS_GC is not set

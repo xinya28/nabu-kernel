@@ -154,6 +154,11 @@ jobs:
             cat configs/perf.fragment >> "$cfg"
             echo "::notice::perf overlay applied"
           fi
+          if [ '${{ inputs.autosleep_default }}' != 'false' ]; then
+            printf '\n' >> "$cfg"
+            cat configs/suspend.fragment >> "$cfg"
+            echo "::notice::suspend overlay applied"
+          fi
           lv='${{ inputs.localversion }}'
           [ -n "$lv" ] || lv="-perf"
           sed -i "s|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION=\"${lv}\"|" "$cfg"
