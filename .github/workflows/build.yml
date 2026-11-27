@@ -47,6 +47,14 @@ on:
         required: false
         default: ""
         type: string
+      ksu_source:
+        description: "KernelSU source: tree (BakaSU) or official-v0.9.5"
+        required: true
+        default: tree
+        type: choice
+        options:
+          - tree
+          - official-v0.9.5
   push:
     branches: [main]
   pull_request:
@@ -108,6 +116,17 @@ jobs:
           git -C kernel log -1 --oneline
           echo "KERNEL_BRANCH=$branch" >> "$GITHUB_ENV"
           echo "KERNEL_SHA=$(git -C kernel rev-parse --short HEAD)" >> "$GITHUB_ENV"
+
+      - name: Swap KernelSU source (optional)
+        run: |
+          set -euo pipefail
+          src='${{ inputs.ksu_source }}'
+          if [ "$src" = "official-v0.9.5" ]; then
+            rm -rf kernel/KernelSU
+            git clone --depth 1 -b v0.9.5 https://github.com/tiann/KernelSU.git kernel/KernelSU
+            ls kernel/KernelSU/kernel | head -5
+            echo "::notice::official KernelSU v0.9.5 swapped in"
+          fi
 
       - name: Apply kernel patches
         run: |
