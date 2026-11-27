@@ -150,7 +150,15 @@ jobs:
           # can grep it for ksu_* symbols -- that is exactly how native root
           # detectors fingerprint KernelSU. Root keeps read access.
           sed -i 's/proc_create("kallsyms", 0444,/proc_create("kallsyms", 0400,/' kernel/kernel/kallsyms.c
+          grep -q 'proc_create("kallsyms", 0400' kernel/kernel/kallsyms.c || { echo "kallsyms sed did not apply"; exit 1; }
           grep -n 'proc_create("kallsyms"' kernel/kernel/kallsyms.c
+          if [ '${{ inputs.autosleep_default }}' != 'false' ]; then
+            git -C kernel apply --verbose "$PWD/patches/0003-nabu-autosleep-gate.patch"
+            grep -q 'CONFIG_PM_AUTOSLEEP' kernel/recovery/profile-reference.config
+            printf '\nobj-y += nabu_autosleep_gate.o\n' >> kernel/kernel/power/Makefile
+            grep -n 'nabu_autosleep_gate' kernel/kernel/power/Makefile
+            echo "::notice::screen-gated autosleep enabled"
+          fi
           # BakaSU installs an anonymous [ksu_driver] descriptor for whoever
           # issues reboot(2) with the magic pair, before the CAP_SYS_BOOT check.
           # GET_INFO/CHECK_SAFEMODE on that descriptor are world readable, so any
