@@ -35,18 +35,50 @@
 **SUSFS 与 SU 授权无关**：它只负责隐藏/伪装（`su` 路径、mount、uname 等），
 内核不带 SUSFS 时管理器只是把那一栏显示为不可用，模块管理和授权照常工作。
 
-### 2. 只把 `autosleep` 变量设成 `mem` 不会真的挂起
+### 2. autosleep 必须按屏幕状态门控
 
 4.14 默认没有 autosleep。加上 `CONFIG_PM_AUTOSLEEP=y` 只是让 `/sys/power/autosleep` 出现；
-而仅把源码里的 `autosleep_state` 赋值为 `PM_SUSPEND_MEM` **不会排队挂起工作**，
+仅把源码里的 `autosleep_state` 赋值为 `PM_SUSPEND_MEM` **不会排队挂起工作**，
 内核会"报告 mem 但永不入睡"，`/sys/power/suspend_stats` 始终 0/0。
 
-要真正挂起必须走 `pm_autosleep_set_state()`。
+要真正挂起必须走 `pm_autosleep_set_state()`，但**不能开机就无条件 arm**：
+autosleep 的语义是"没有 wakelock 就立刻挂起"，而该移植 ROM 在亮屏时并不持有 wakelock，
+无条件 arm 会让设备在使用中反复 suspend/resume，表现为屏幕固定频率闪黑。
 
-⚠️ **无条件开启 autosleep 会导致亮屏使用中反复闪黑**：autosleep 的语义是"没有 wakelock 就立刻挂起"，
-而该移植 ROM 在亮屏时并不持有 wakelock，于是使用中不断 suspend → 被 typec/充电中断唤醒 → 再 suspend。
-正确做法是**按屏幕状态门控**：熄屏 `POWERDOWN` 才 `mem`，亮屏 `UNBLANK` 立即 `off`。
-这一项仍在处理中，当前版本请勿长期使用。
+所以本仓库加了 `kernel/power/nabu_autosleep_gate.c`
+（`patches/0002-autosleep-screen-gate.patch`，构建时由 `build.yml` 应用并把目标文件追加进
+`kernel/power/Makefile`）：
+
+- `late_initcall` 先 `pm_autosleep_set_state(PM_SUSPEND_ON)`——开机不 arm，等屏幕状态明确；
+- 注册树里已有的 `drm_notifier`（实现见 `drivers/gpu/drm/msm/dsi-staging/dsi_drm.c`，
+  `EXPORT_SYMBOL`；NVT 触控与 xiaomi-keyboard 也在用）：
+  - 面板**真正断电后**（`DRM_EVENT_BLANK` + `DRM_BLANK_POWERDOWN`）→ `PM_SUSPEND_MEM`；
+  - **点亮前**（`DRM_EARLY_EVENT_BLANK` + `DRM_BLANK_UNBLANK`）→ `PM_SUSPEND_ON`。
+
+`autosleep_default=false` 时既不应用补丁也不加配置，可退回纯用户态方案
+（熄屏 `echo mem > /sys/power/autosleep`，亮屏 `echo off`）。
+
+#### 设备验证记录（2026-11-27，build #35，`fastboot boot` 临时启动）
+
+已验证：
+
+- 开机 1.5 s 注册门控，`/sys/power/autosleep` 为 `off`；13.9 s 首个 `UNBLANK` 打印
+  `display on, disarming autosleep`；
+- 亮屏静置 **3 分 20 秒**（17:33:50–17:37:10）：`success=0 fail=0`，`/sys/power/autosleep=off`，
+  dmesg 无任何 `PM: suspend` 记录——亮屏不再有挂起尝试；
+- 按电源键熄屏：打印 `display off, arming autosleep`，`/sys/power/autosleep=mem`；
+  再点亮：`display on, disarming autosleep`，回到 `off`；
+- `su -c id` 正常（`context=u:r:ksu:s0`），KSU 模块与内核版本未受影响。
+
+**尚未验证（如实记录）**：
+
+- **拔线熄屏后 `success` 增长**：本会话无法物理拔掉数据线。插着 USB 时 autosleep 的
+  work 会阻塞在 `pm_get_wakeup_count(block=true)`（USB 持续产生未消费的 wakeup event），
+  因此不会尝试挂起，`suspend_stats` 保持 0/0——这与"调试休眠要拔线"的结论一致，
+  但"拔线后确实入睡"这一步仍需人工确认（步骤见下方验证清单第 4 条）。
+- **管理器首页「工作中 Built-in」**：测试期间另一个会话把 `com.resukisu.resukisu`
+  从设备上卸载了（本仓库同时被另一会话推送构建），所以这一项本次没有重新截图确认；
+  `su` 与模块挂载正常。
 
 ## 怎么读 suspend_stats
 
@@ -61,10 +93,11 @@ success=11  fail=50  last_failed_dev=alarmtimer  last_failed_errno=-16
 
 ## 验证清单
 
-1. `su -c id` 返回 `uid=0(root) ... context=u:r:ksu:s0`
-2. 管理器首页显示「工作中 Built-in」，模块数量与 `/data/adb/modules` 一致
-3. 亮屏放置数分钟：屏幕不闪黑、`suspend_stats` 不增长
-4. 拔线熄屏数分钟：`success` 增长，`/sys/power/autosleep` 为 `mem`
+1. `su -c id` 返回 `uid=0(root) ... context=u:r:ksu:s0` — ✅ 2026-11-27 已验证
+2. 管理器首页显示「工作中 Built-in」，模块数量与 `/data/adb/modules` 一致 — ⚠️ 本次被另一会话卸载了管理器，未复测
+3. 亮屏放置数分钟：屏幕不闪黑、`suspend_stats` 不增长 — ✅ 3 分 20 秒 0/0
+4. 拔线熄屏数分钟：`success` 增长，`/sys/power/autosleep` 为 `mem` — ⏳ 需要人工拔掉数据线后确认
+   （插着 USB 时内核会正确拒绝挂起，看到 `fail` 增长或完全不尝试都属正常）
 
 验证一律先 `fastboot boot` 临时启动，确认无误再刷写。
 

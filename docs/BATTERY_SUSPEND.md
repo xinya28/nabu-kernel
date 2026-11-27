@@ -56,41 +56,68 @@ wakelock 列表、`/sys/power/*` 状态），把输出给我就能定位到具�
 > 说明：内核能直接修的只有第 3、4 类。1、2 类必须改 ROM（framework-res / vendor），
 > 不是换内核能解决的——所以本次没有为了“看起来改了”而往驱动里塞投机补丁。
 
-## 2. 熄屏休眠：本次真的改了
+## 2. 熄屏休眠：autosleep + 屏幕状态门控
 
 原厂配置 `# CONFIG_PM_AUTOSLEEP is not set`，内核只提供 `/sys/power/state` +
 `/sys/power/wakeup_count` 这条需要 userspace 配合的路径。移植 ROM 的 SystemSuspend 一旦不工作，
 屏幕关了也进不了 suspend（iodé 社区在 nabu 上测到过 **>15%/小时** 的待机耗电，PixelOS/EvolutionX
 的 nabu 更新日志里也专门写了 "deep sleep issue fixed"）。
 
-本次在 `configs/perf.fragment` 增加：
+本次在 `configs/suspend.fragment` 增加：
 
 ```
 CONFIG_PM_AUTOSLEEP=y
 ```
 
-效果：出现 `/sys/power/autosleep`，写入 `mem` 后**内核在最后一个 wakelock 释放时自动 suspend**，
-不再依赖 ROM 的 `system_suspend` 服务：
+并应用两个源码补丁（只在 `autosleep_default=true` 时应用）：
+
+1. `patches/0001-autosleep-default-mem.patch`：把 `autosleep_state` 的初值改成 `PM_SUSPEND_MEM`。
+   注意：这只改变量，**不会排队挂起工作**，单独用会"报告 mem 但永不入睡"。
+2. `patches/0002-autosleep-screen-gate.patch`：新增 `kernel/power/nabu_autosleep_gate.c`。
+   autosleep 的语义是"没有 wakelock 就挂起"，而移植 ROM 亮屏时不持 wakelock，无条件 arm 会变成
+   使用中反复 suspend/resume（闪黑）。门控用树里已有的 `drm_notifier`
+   （`drivers/gpu/drm/msm/dsi-staging/dsi_drm.c`）：
+   - `DRM_EVENT_BLANK` + `DRM_BLANK_POWERDOWN`（面板已断电）→ `pm_autosleep_set_state(PM_SUSPEND_MEM)`
+   - `DRM_EARLY_EVENT_BLANK` + `DRM_BLANK_UNBLANK`（点亮前）→ `pm_autosleep_set_state(PM_SUSPEND_ON)`
+   - `late_initcall` 先置 `PM_SUSPEND_ON`，开机不 arm。
+
+   `build.yml` 用 `git apply` 添加新文件，再用 `printf` 往 `kernel/power/Makefile` 追加
+   `obj-$(CONFIG_PM_AUTOSLEEP) += nabu_autosleep_gate.o`，这样不依赖 Makefile 行的上下文，
+   内核树改格式也不会把构建弄挂。
+
+开机后 `/sys/power/autosleep` 是 `off`，熄屏才会变 `mem`。回退方案（`autosleep_default=false`
+或不带门控的内核）等价手动操作：
 
 ```bash
-adb shell su -c 'echo mem > /sys/power/autosleep'
-adb shell su -c 'cat /sys/power/autosleep'     # 期望输出 mem
+adb shell su -c 'echo mem > /sys/power/autosleep'   # 熄屏
+adb shell su -c 'echo off > /sys/power/autosleep'   # 亮屏
 ```
 
 验证是否真的睡了：
 
 ```bash
 adb shell su -c 'cat /sys/power/suspend_stats/success'   # 数字应持续增长
-adb shell su -c 'cat /proc/wakelocks | head'            # 或 dumpsys power
-dmesg | grep -i -E 'PM: suspend|Suspended for'
+dmesg | grep -i -E 'nabu-autosleep|PM: suspend|Suspended for'
 ```
 
 如果 `suspend_stats/fail` 在涨，`dmesg` 里会给出失败原因（常见是某个驱动 `-EBUSY`），
 把那段贴出来就能定位到具体 wakelock/driver。
 
+> 插着 USB 调试时 autosleep 的 work 会阻塞在 `pm_get_wakeup_count(block=true)`：
+> USB 持续产生未消费的 wakeup event，内核根本不会尝试挂起（`suspend_stats` 不动）。
+> 这是内核正常行为，所以**验证入睡必须拔掉数据线**。
+
+### 设备验证状态（2026-11-27，build #35）
+
+- ✅ 开机不 arm（`autosleep=off`），首个 `UNBLANK` 打印 `display on, disarming autosleep`
+- ✅ 亮屏静置 3 分 20 秒：`success=0 fail=0`，无 `PM: suspend` 记录
+- ✅ 熄屏打印 `display off, arming autosleep`，`autosleep=mem`；点亮后恢复 `off`
+- ⏳ **拔线熄屏后 `success` 增长尚未实测**：本会话无法物理拔线，且测试机同时被另一会话占用
+  （中途被卸载管理器、被重启过），这一步需要人工按第 4 条清单确认。
+
 ## 3. 本次内核相对原厂配置的全部差异
 
-除 KSU/SUSFS 外，只有这些（全部是配置项，不改源码）：
+配置项差异除 KSU/SUSFS 外只有 `CONFIG_PM_AUTOSLEEP=y`（`perf` 档位另有下表调优项）。
 
 | 选项 | 原厂 | 现在 | 目的 |
 | --- | --- | --- | --- |
