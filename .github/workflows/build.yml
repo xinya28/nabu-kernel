@@ -134,7 +134,15 @@ jobs:
           if [ '${{ inputs.autosleep_default }}' != 'false' ]; then
             git -C kernel apply --verbose "$PWD/patches/0001-autosleep-default-mem.patch"
             grep -n 'autosleep_state = ' kernel/kernel/power/autosleep.c
-            echo "::notice::autosleep defaults to mem"
+            # Gate autosleep on the display state: arming it unconditionally
+            # suspends the device while the ported ROM holds no wakelock with
+            # the screen on. The new file is added by a hunk-less new-file
+            # patch; the Makefile entry is simply appended so a reformatted
+            # kernel Makefile cannot break the apply.
+            git -C kernel apply --verbose "$PWD/patches/0002-autosleep-screen-gate.patch"
+            printf '\nobj-$(CONFIG_PM_AUTOSLEEP) += nabu_autosleep_gate.o\n' >> kernel/kernel/power/Makefile
+            grep -n 'nabu_autosleep_gate' kernel/kernel/power/Makefile
+            echo "::notice::autosleep defaults to mem, gated by display state"
           else
             echo "::notice::autosleep patch skipped"
           fi
