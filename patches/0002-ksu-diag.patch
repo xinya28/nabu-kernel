@@ -100,10 +100,3 @@ symbols sucompat hooks -- all without a readable kernel log.
 +late_initcall(ksu_diag_init);
 +
 +MODULE_LICENSE("GPL");
---- a/KernelSU/kernel/Makefile
-+++ b/KernelSU/kernel/Makefile
-@@ -7,3 +7,4 @@
- kernelsu-objs += ksud.o
- kernelsu-objs += embed_ksud.o
- kernelsu-objs += kernel_compat.o
-+kernelsu-objs += ksu_diag.o

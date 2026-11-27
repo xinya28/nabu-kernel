@@ -140,6 +140,8 @@ jobs:
           fi
           if [ '${{ inputs.ksu_source }}' = 'official-v0.9.5' ]; then
             git -C kernel apply --verbose "$PWD/patches/0002-ksu-diag.patch"
+            sed -i '/^kernelsu-objs :=/a kernelsu-objs += ksu_diag.o' kernel/KernelSU/kernel/Makefile
+            grep -q 'ksu_diag.o' kernel/KernelSU/kernel/Makefile
             echo "::notice::/proc/ksu_diag diagnostic enabled"
           fi
 
