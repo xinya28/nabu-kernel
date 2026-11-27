@@ -1,97 +1,90 @@
 [![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
 
-# nabu-kernel — 小米平板 5（nabu）4.14.180 内核构建流水线
+# nabu kernel builds
 
-用 GitHub Actions 给 **小米平板 5 / nabu（SM8150-AC，骁龙 860）** 编译 4.14.180 内核，
-适配 HyperOS 3 移植包 `OS3.0.304.0.WNSCNXM_16.0`。
+面向 **小米平板 5（nabu / SM8150-AC / Snapdragon 860）** 的 4.14.180 内核构建流水线。
+源码基线是 [PerezChilli/android_kernel_xiaomi_nabu](https://github.com/PerezChilli/android_kernel_xiaomi_nabu)，
+目标 ROM 是移植版 HyperOS 3 / Android 16（`OS3.0.304.0.WNSCNXM`）。
 
----
+本仓库不存内核源码，只放 **CI 配方 + 配置片段 + 补丁**，构建产物（`Image` / AnyKernel3 zip）由 GitHub Actions 产出。
 
-## 为什么是 4.14.180 而不是 4.19
+## 两种构建档位
 
-对 ROM 包做了字节级分析：
+| 档位 | 用途 | workflow_dispatch 输入 |
+|---|---|---|
+| ROM 原样 + 休眠 | 只在内核里加熄屏挂起，其余与 ROM 自带内核一致 | `source_branch=nabu-w-oss-bks`、`perf_overlay=false`、`autosleep_default=true`、`ksu_source=tree` |
+| 性能 + KSU | 额外加 BBR / fq_codel / BFQ 等调优 | `perf_overlay=true`，其余同上 |
 
-| 检查项 | 实测结果 |
-| --- | --- |
-| `boot.img` | header v3，内核是**未压缩 arm64 `Image`**（`ARMd` @0x38） |
-| 内核版本串 | `Linux version 4.14.180-moon-os3-ga5805c039` |
-| `super.img` 里 vendor 模块 | `vermagic=4.14.180-perf-gde52a0344e18 SMP preempt mod_unload modversions aarch64` |
-| 是否存在 4.19 模块 | 否，全盘只有 4.14.180 一种 |
+`perf.fragment` 里的每一项都是上游 4.14 已有选项，不改源码，所以厂商模块的 `vermagic` 仍然对得上；
+实际落地的选项可以看构建产物里的 `reference-config.diff`。
 
-`kernel/module.c` 的 `same_magic()` 在 `CONFIG_MODVERSIONS=y` 时**跳过 vermagic 的版本号段**，
-只比对 `SMP preempt mod_unload modversions aarch64` 与符号 CRC。所以内核 release 串可以是
-`4.14.180-perf`，vendor 的 `adsp_dlkm` / `wcd_dlkm` / `audio_dlkm` / `machine_dlkm` 等模块照常加载。
-这也是本项目能保障「系统功能正常」的前提。
+## 两个必须知道的结论
 
-## 内置修复与优化
+### 1. KSU 管理器只能用同一家
 
-| 项目 | 内容 | 状态 |
-| --- | --- | --- |
-| 熄屏休眠 | `CONFIG_PM_AUTOSLEEP=y` + `patches/0001-autosleep-default-mem.patch`（`autosleep_state = PM_SUSPEND_MEM`） | ✅ 实测 `suspend_stats/success=13`，`dmesg` 成对 `PM: suspend entry (deep)` |
-| 网络 | BBR + `fq`/`fq_codel`/`pie` | ✅ |
-| IO / 内存 | `IOSCHED_BFQ` 可选、zram `lz4hc` | ✅ |
-| 调试开销 | `SCHED_DEBUG`、`FUNCTION_TRACER`、`KPROBES`、`DEBUG_INFO` 关闭 | ✅ |
-| root | 可在 BakaSU 与 **官方 KernelSU v0.9.5** 之间切换（`ksu_source` 输入） | 🔧 |
-| 电池容量显示 | framework `power_profile.xml` 写死 `battery.capacity=1000` | ❌ 内核侧无解（见下） |
-| 写字时蓝牙/音频断流 | —— | ❌ 内核侧已排除（见下） |
+树内自带的 KernelSU 是 **ReSukiSU / BakaSU 系**，不是官方实现。匹配的管理器是
+[`BakaSU v4.2.0-rc3 (35286)`](https://github.com/Baka-SU/BakaSU)（包名 `com.resukisu.resukisu`）。
 
-## 已知问题（诚实记录）
+换成官方 KernelSU v0.9.5 或 KernelSU-Next 都会失败：
 
-**电池容量显示 1000 mAh**：`framework-res.apk` 的 `res/xml/power_profile.xml` 里
-`battery.capacity` 是移植时留下的占位值。内核上报是对的（`charge_full=8688 mAh`、
-`charge_full_design=8720 mAh`、`health=Good`）。替换 `framework-res.apk` 已在真机验证
-会导致 system_server 起不来（`battery` 服务注册失败、zygote 反复重启），因此不做。
+- 官方 v0.9.5 → 非 GKI 场景下 `su` 不会出现
+- KernelSU-Next `v1.0.3-10-legacy` → 管理器首页直接报「不支持 — KernelSU 现在只支持 GKI 内核」
 
-**笔一动就断流**：已排除触控中断抢占（音频线程本就在大核）、笔的 BLE 共存、A2DP offload、
-SELinux 拒绝、动态刷新率、高码率编解码器六种假设。旧 ROM 60Hz 不断、新 ROM 60/120Hz 都断，
-指向移植包系统层的带宽/调度基线，属内核之外。
+驱动版本比管理器新时会提示「需要更新管理器」，用 35286 这一版即可对齐。
 
-## 构建
+**SUSFS 与 SU 授权无关**：它只负责隐藏/伪装（`su` 路径、mount、uname 等），
+内核不带 SUSFS 时管理器只是把那一栏显示为不可用，模块管理和授权照常工作。
 
-```
-Actions → nabu-kernel → Run workflow
-  source_branch      nabu-w-oss-bks / nabu-w-oss-bk / nabu-w-oss
-  localversion       -perf
-  perf_overlay       true
-  autosleep_default  true
-  ksu_source         tree（BakaSU）/ official-v0.9.5
-  ksu_version        可选，钉住 KSU_VERSION（用于匹配管理器版本号）
-```
+### 2. 只把 `autosleep` 变量设成 `mem` 不会真的挂起
 
-工具链 LLVM/Clang + LLD **20.1.8**，产物：
+4.14 默认没有 autosleep。加上 `CONFIG_PM_AUTOSLEEP=y` 只是让 `/sys/power/autosleep` 出现；
+而仅把源码里的 `autosleep_state` 赋值为 `PM_SUSPEND_MEM` **不会排队挂起工作**，
+内核会"报告 mem 但永不入睡"，`/sys/power/suspend_stats` 始终 0/0。
+
+要真正挂起必须走 `pm_autosleep_set_state()`。
+
+⚠️ **无条件开启 autosleep 会导致亮屏使用中反复闪黑**：autosleep 的语义是"没有 wakelock 就立刻挂起"，
+而该移植 ROM 在亮屏时并不持有 wakelock，于是使用中不断 suspend → 被 typec/充电中断唤醒 → 再 suspend。
+正确做法是**按屏幕状态门控**：熄屏 `POWERDOWN` 才 `mem`，亮屏 `UNBLANK` 立即 `off`。
+这一项仍在处理中，当前版本请勿长期使用。
+
+## 怎么读 suspend_stats
 
 ```
-nabu-kernel-<branch>-<sha>.zip   AnyKernel3 刷机包
-Image                            未压缩 arm64 Image
-SHA256SUMS / reference-config.diff
+success=11  fail=50  last_failed_dev=alarmtimer  last_failed_errno=-16
 ```
 
-## 本地工具
+`fail` 不是故障，而是**挂起被否决**的次数，`-16` 即 `-EBUSY`（"现在别睡，有东西要跑"）。
+最常见的良性否决是 `alarmtimer`：有即将到期的唤醒定时器时它的 `suspend` 回调就返回 `-EBUSY`。
+插着充电线时 `typec-cc-state-change` / `usbin-uv` / `ssusb` 也会不断叫停，
+所以调试休眠请**拔掉数据线**——USB/ADB 本身会一直持有唤醒源。
 
-- `tools/repack_boot.js` — 用 ROM 原版 `boot.img` 替换内核重打包（header v3）。
-  已用本项目 ROM 的 boot.img 做过**往返验证：重打包结果与原文件 0 字节差异**。
+## 验证清单
 
-```bash
-node tools/repack_boot.js boot.img Image boot-new.img
-fastboot flash boot boot-new.img
-```
+1. `su -c id` 返回 `uid=0(root) ... context=u:r:ksu:s0`
+2. 管理器首页显示「工作中 Built-in」，模块数量与 `/data/adb/modules` 一致
+3. 亮屏放置数分钟：屏幕不闪黑、`suspend_stats` 不增长
+4. 拔线熄屏数分钟：`success` 增长，`/sys/power/autosleep` 为 `mem`
 
-- `scripts/ondevice-diag.sh` — 电池/休眠/中断现场取证（需 root）
-- `scripts/ondevice-stylus-diag.sh` — 笔与蓝牙音频断流取证（A/B 两段对比）
+验证一律先 `fastboot boot` 临时启动，确认无误再刷写。
 
-## 目录
+## 产物与刷写
 
-```
-.github/workflows/build.yml   CI 主流程
-configs/perf.fragment         性能 overlay
-patches/                      内核补丁（autosleep 默认 mem）
-scripts/                      打包与真机取证脚本
-tools/repack_boot.js          boot.img 重打包
-docs/                         分析与结论（电池/休眠、断流）
-```
+| 文件 | 用途 |
+|---|---|
+| `boot-nabu-rom-suspend.img` | 直接 `fastboot boot` / `fastboot flash boot` |
+| `nabu-kernel-suspend-anykernel3.zip` | Recovery 或 KSU 管理器内刷入，自动写 `boot` 分区 |
+| `Image` | 裸内核，`.img` 里被替换的那一段 |
 
-## 说明
+`boot.img` 是 header v3、ramdisk 保持原样，只替换内核；`tools/repack_boot.js` 做过往返校验（改完再还原与原文件字节一致）。
 
-内核源码来自 [`PerezChilli/android_kernel_xiaomi_nabu`](https://github.com/PerezChilli/android_kernel_xiaomi_nabu)
-（HyperOS 3 / Android 16 适配的 4.14.180 树）。编译通过不代表能开机，
-首次刷写请先备份 boot 分区。
+## 许可
+
+本仓库的 CI 脚本、配置片段与补丁以 **GPL-2.0-only** 发布，与 Linux 内核保持一致（见 `LICENSE`）。
+内核源码版权归各自作者所有；构建产物受上游内核的 GPL-2.0 约束。
+
+## 致谢
+
+- [PerezChilli/android_kernel_xiaomi_nabu](https://github.com/PerezChilli/android_kernel_xiaomi_nabu) — 内核源码树
+- [Baka-SU/BakaSU](https://github.com/Baka-SU/BakaSU) — 树内使用的 KernelSU 下游实现与管理器
+- [tiann/KernelSU](https://github.com/tiann/KernelSU) — KernelSU 上游

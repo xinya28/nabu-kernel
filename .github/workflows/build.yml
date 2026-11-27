@@ -134,20 +134,9 @@ jobs:
           if [ '${{ inputs.autosleep_default }}' != 'false' ]; then
             git -C kernel apply --verbose "$PWD/patches/0001-autosleep-default-mem.patch"
             grep -n 'autosleep_state = ' kernel/kernel/power/autosleep.c
-            # Defaulting the static variable alone leaves the workqueue idle: the
-            # kernel then reports "mem" from /sys/power/autosleep but never tries
-            # to suspend. Arming it has to go through pm_autosleep_set_state().
-            printf '\n/* nabu: arm autosleep once the workqueue exists */\nstatic int __init nabu_autosleep_arm(void)\n{\n\tpm_autosleep_set_state(PM_SUSPEND_MEM);\n\treturn 0;\n}\nlate_initcall(nabu_autosleep_arm);\n' >> kernel/kernel/power/autosleep.c
-            tail -8 kernel/kernel/power/autosleep.c
             echo "::notice::autosleep defaults to mem"
           else
             echo "::notice::autosleep patch skipped"
-          fi
-          if [ '${{ inputs.ksu_source }}' = 'official-v0.9.5' ]; then
-            git -C kernel apply --verbose "$PWD/patches/0002-ksu-diag.patch"
-            sed -i '/^kernelsu-objs :=/a kernelsu-objs += ksu_diag.o' kernel/KernelSU/kernel/Makefile
-            grep -q 'ksu_diag.o' kernel/KernelSU/kernel/Makefile
-            echo "::notice::/proc/ksu_diag diagnostic enabled"
           fi
 
       - name: Apply config overlay
