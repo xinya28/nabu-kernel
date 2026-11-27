@@ -1,0 +1,62 @@
+// Temporary CI diagnostic for the official KernelSU swap.
+//
+// The tree's modern KernelSU fork is wired in through drivers/kernelsu (a
+// symlink to ../KernelSU/kernel). Replacing that directory with official
+// v0.9.5 sources builds cleanly, but the resulting kernel shows no evidence of
+// KernelSU being active. This file answers two questions without needing a
+// readable kernel log:
+//
+//   1. Does an initcall belonging to the swapped-in module run at all?
+//      (if /proc/ksu_diag is missing, the module is not reachable)
+//   2. Can the kernel resolve the symbols the 0.9.5 hook code looks up at
+//      runtime? A missing symbol there silently disables every hook.
+#include <linux/kallsyms.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
+#include <linux/version.h>
+
+static int ksu_diag_show(struct seq_file *m, void *v)
+{
+	static const char *const syms[] = {
+		"sys_call_table",     "security_hook_heads",
+		"cap_task_prctl",     "sys_prctl",
+		"sys_faccessat",      "sys_newfstatat",
+		"sys_execve",         "kallsyms_lookup_name",
+	};
+	int i;
+
+	seq_puts(m, "ksu_diag: late_initcall reached\n");
+	seq_printf(m, "LINUX_VERSION_CODE   = %d\n", LINUX_VERSION_CODE);
+	seq_printf(m, "CONFIG_KPROBES       = %d\n", IS_ENABLED(CONFIG_KPROBES));
+	seq_printf(m, "CONFIG_KALLSYMS_ALL  = %d\n", IS_ENABLED(CONFIG_KALLSYMS_ALL));
+	for (i = 0; i < ARRAY_SIZE(syms); i++) {
+		unsigned long a = kallsyms_lookup_name(syms[i]);
+
+		seq_printf(m, "%-22s = 0x%lx%s\n", syms[i], a,
+			   a ? "" : "  <== MISSING");
+	}
+	return 0;
+}
+
+static int ksu_diag_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, ksu_diag_show, NULL);
+}
+
+static const struct file_operations ksu_diag_fops = {
+	.open = ksu_diag_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+static int __init ksu_diag_init(void)
+{
+	proc_create("ksu_diag", 0444, NULL, &ksu_diag_fops);
+	return 0;
+}
+late_initcall(ksu_diag_init);
+
+MODULE_LICENSE("GPL");

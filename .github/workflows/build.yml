@@ -138,6 +138,10 @@ jobs:
           else
             echo "::notice::autosleep patch skipped"
           fi
+          if [ '${{ inputs.ksu_source }}' = 'official-v0.9.5' ]; then
+            git -C kernel apply --verbose "$PWD/patches/0002-ksu-diag.patch"
+            echo "::notice::/proc/ksu_diag diagnostic enabled"
+          fi
 
       - name: Apply config overlay
         run: |
