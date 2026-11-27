@@ -37,6 +37,11 @@ on:
         required: true
         default: true
         type: boolean
+      autosleep_default:
+        description: "default /sys/power/autosleep to mem (kernel patch)"
+        required: true
+        default: true
+        type: boolean
   push:
     branches: [main]
   pull_request:
@@ -98,6 +103,17 @@ jobs:
           git -C kernel log -1 --oneline
           echo "KERNEL_BRANCH=$branch" >> "$GITHUB_ENV"
           echo "KERNEL_SHA=$(git -C kernel rev-parse --short HEAD)" >> "$GITHUB_ENV"
+
+      - name: Apply kernel patches
+        run: |
+          set -euo pipefail
+          if [ '${{ inputs.autosleep_default }}' != 'false' ]; then
+            git -C kernel apply --verbose "$PWD/patches/0001-autosleep-default-mem.patch"
+            grep -n 'autosleep_state = ' kernel/kernel/power/autosleep.c
+            echo "::notice::autosleep defaults to mem"
+          else
+            echo "::notice::autosleep patch skipped"
+          fi
 
       - name: Apply config overlay
         run: |
