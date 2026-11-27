@@ -151,6 +151,19 @@ jobs:
           # detectors fingerprint KernelSU. Root keeps read access.
           sed -i 's/proc_create("kallsyms", 0444,/proc_create("kallsyms", 0400,/' kernel/kernel/kallsyms.c
           grep -n 'proc_create("kallsyms"' kernel/kernel/kallsyms.c
+          # BakaSU installs an anonymous [ksu_driver] descriptor for whoever
+          # issues reboot(2) with the magic pair, before the CAP_SYS_BOOT check.
+          # GET_INFO/CHECK_SAFEMODE on that descriptor are world readable, so any
+          # app can fingerprint KernelSU without root.  Restrict the install path
+          # to the manager app and root; the manager gets its fd from the setuid
+          # hook, so nothing in-tree loses functionality.
+          if [ '${{ inputs.ksu_source }}' != 'official-v0.9.5' ]; then
+            git -C kernel apply --verbose "$PWD/patches/0003-ksu-supercall-restrict-fd.patch"
+            grep -n -A2 'manager_or_root()' kernel/KernelSU/kernel/supercall/supercall.c
+            echo "::notice::ksu [ksu_driver] fd install restricted to manager/root"
+          else
+            echo "::notice::KernelSU supercall patch skipped (not tree)"
+          fi
 
       - name: Apply config overlay
         run: |
