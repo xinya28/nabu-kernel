@@ -1,11 +1,8 @@
 Screen-gate autosleep: arm PM_SUSPEND_MEM only while the panel is off.
 
-The ported ROM holds no wakelock while the display is on, so a bare
-autosleep=mem suspends during normal use and the screen blanks periodically.
-
 --- /dev/null
 +++ b/kernel/power/nabu_autosleep_gate.c
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,53 @@
 +// Screen-gated autosleep for nabu.
 +//
 +// CONFIG_PM_AUTOSLEEP alone is not enough on this ported ROM: the framework
@@ -17,6 +14,12 @@ autosleep=mem suspends during normal use and the screen blanks periodically.
 +#include <linux/notifier.h>
 +#include <linux/suspend.h>
 +#include <linux/msm_drm_notify.h>
++
++/*
++ * Declared in kernel/power/power.h, which is private to kernel/power. We live
++ * in that directory but do not include the private header, so declare it here.
++ */
++extern int pm_autosleep_set_state(suspend_state_t state);
 +
 +static int nabu_gate_cb(struct notifier_block *self, unsigned long event,
 +			void *data)

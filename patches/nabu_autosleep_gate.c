@@ -10,6 +10,12 @@
 #include <linux/suspend.h>
 #include <linux/msm_drm_notify.h>
 
+/*
+ * Declared in kernel/power/power.h, which is private to kernel/power. We live
+ * in that directory but do not include the private header, so declare it here.
+ */
+extern int pm_autosleep_set_state(suspend_state_t state);
+
 static int nabu_gate_cb(struct notifier_block *self, unsigned long event,
 			void *data)
 {
