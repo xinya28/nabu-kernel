@@ -1,11 +1,12 @@
 Add a temporary /proc/ksu_diag node to the official KernelSU swap.
 
-It proves whether an initcall from the swapped-in module runs and which of
-the runtime-resolved symbols are missing, without needing a readable log.
+It proves whether an initcall from the swapped-in module runs, which of the
+runtime-resolved symbols are missing, and whether register_kprobe() accepts the
+symbols sucompat hooks -- all without a readable kernel log.
 
 --- /dev/null
 +++ b/KernelSU/kernel/ksu_diag.c
-@@ -0,0 +1,62 @@
+@@ -0,0 +1,93 @@
 +// Temporary CI diagnostic for the official KernelSU swap.
 +//
 +// The tree's modern KernelSU fork is wired in through drivers/kernelsu (a
@@ -20,10 +21,31 @@ the runtime-resolved symbols are missing, without needing a readable log.
 +//      runtime? A missing symbol there silently disables every hook.
 +#include <linux/kallsyms.h>
 +#include <linux/kernel.h>
++#include <linux/kprobes.h>
 +#include <linux/module.h>
 +#include <linux/proc_fs.h>
 +#include <linux/seq_file.h>
 +#include <linux/version.h>
++
++/* sucompat installs its hooks with register_kprobe(), so a registration
++ * failure is silent from userspace. Try the very same symbols here.
++ */
++#if IS_ENABLED(CONFIG_KPROBES)
++static int ksu_diag_kprobe(const char *sym)
++{
++	struct kprobe kp;
++	int rc;
++
++	memset(&kp, 0, sizeof(kp));
++	kp.symbol_name = sym;
++	rc = register_kprobe(&kp);
++	if (rc == 0)
++		unregister_kprobe(&kp);
++	return rc;
++}
++#else
++static int ksu_diag_kprobe(const char *sym) { return -1; }
++#endif
 +
 +static int ksu_diag_show(struct seq_file *m, void *v)
 +{
@@ -45,6 +67,16 @@ the runtime-resolved symbols are missing, without needing a readable log.
 +		seq_printf(m, "%-22s = 0x%lx%s\n", syms[i], a,
 +			   a ? "" : "  <== MISSING");
 +	}
++	seq_puts(m, "\nregister_kprobe() on the sucompat symbols:\n");
++	for (i = 0; i < ARRAY_SIZE(syms); i++) {
++		int rc = ksu_diag_kprobe(syms[i]);
++
++		seq_printf(m, "  %-20s rc=%d%s\n", syms[i], rc,
++			   rc ? "  <== FAILED" : "");
++	}
++	seq_printf(m, "\nkernelsu_init symbol      = 0x%lx\n",
++		   (unsigned long)kallsyms_lookup_name("kernelsu_init"));
++	seq_printf(m, "resolve_symbol_ksu_diag   = %d\n", 1);
 +	return 0;
 +}
 +

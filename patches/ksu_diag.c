@@ -12,10 +12,31 @@
 //      runtime? A missing symbol there silently disables every hook.
 #include <linux/kallsyms.h>
 #include <linux/kernel.h>
+#include <linux/kprobes.h>
 #include <linux/module.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/version.h>
+
+/* sucompat installs its hooks with register_kprobe(), so a registration
+ * failure is silent from userspace. Try the very same symbols here.
+ */
+#if IS_ENABLED(CONFIG_KPROBES)
+static int ksu_diag_kprobe(const char *sym)
+{
+	struct kprobe kp;
+	int rc;
+
+	memset(&kp, 0, sizeof(kp));
+	kp.symbol_name = sym;
+	rc = register_kprobe(&kp);
+	if (rc == 0)
+		unregister_kprobe(&kp);
+	return rc;
+}
+#else
+static int ksu_diag_kprobe(const char *sym) { return -1; }
+#endif
 
 static int ksu_diag_show(struct seq_file *m, void *v)
 {
@@ -37,6 +58,16 @@ static int ksu_diag_show(struct seq_file *m, void *v)
 		seq_printf(m, "%-22s = 0x%lx%s\n", syms[i], a,
 			   a ? "" : "  <== MISSING");
 	}
+	seq_puts(m, "\nregister_kprobe() on the sucompat symbols:\n");
+	for (i = 0; i < ARRAY_SIZE(syms); i++) {
+		int rc = ksu_diag_kprobe(syms[i]);
+
+		seq_printf(m, "  %-20s rc=%d%s\n", syms[i], rc,
+			   rc ? "  <== FAILED" : "");
+	}
+	seq_printf(m, "\nkernelsu_init symbol      = 0x%lx\n",
+		   (unsigned long)kallsyms_lookup_name("kernelsu_init"));
+	seq_printf(m, "resolve_symbol_ksu_diag   = %d\n", 1);
 	return 0;
 }
 
