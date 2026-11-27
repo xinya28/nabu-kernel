@@ -42,6 +42,11 @@ on:
         required: true
         default: true
         type: boolean
+      ksu_version:
+        description: "pin KSU_VERSION (e.g. 35171); empty = tree default"
+        required: false
+        default: ""
+        type: string
   push:
     branches: [main]
   pull_request:
@@ -127,6 +132,12 @@ jobs:
           lv='${{ inputs.localversion }}'
           [ -n "$lv" ] || lv="-perf"
           sed -i "s|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION=\"${lv}\"|" "$cfg"
+          kv='${{ inputs.ksu_version }}'
+          if [ -n "$kv" ]; then
+            sed -i "s|^KSU_VERSION := \$(shell expr.*|KSU_VERSION := ${kv}|" kernel/KernelSU/kernel/Kbuild
+            grep -n '^KSU_VERSION :=' kernel/KernelSU/kernel/Kbuild
+            echo "::notice::KSU_VERSION pinned to ${kv}"
+          fi
           grep -E 'CONFIG_LOCALVERSION=|CONFIG_MODVERSIONS=|CONFIG_PREEMPT=|CONFIG_KSU=|CONFIG_KSU_SUSFS=' "$cfg" || true
 
       - name: Build kernel
