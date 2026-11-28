@@ -2,7 +2,7 @@
 
 本项目（仓库根目录的 CI 配方、配置片段、补丁与脚本）以 **GPL-2.0-only** 发布，全文见 [LICENSE](LICENSE)。
 
-仓库本身**不包含内核源码**，构建时由 GitHub Actions 从上游仓库拉取。下列组件的著作权归各自作者所有，
+仓库本身**不包含内核源码**，构建时由 GitHub Actions 从上游仓库拉取（见 `kernel` 分支）。下列组件的著作权归各自作者所有，
 其许可条款独立于本项目；构建产物（`Image`、`boot.img`、AnyKernel3 zip）作为上游作品的衍生作品，
 一并受相应许可约束。
 
@@ -13,7 +13,7 @@
 | [Linux kernel](https://www.kernel.org/) | GPL-2.0 | 基础内核 |
 | [PerezChilli/android_kernel_xiaomi_nabu](https://github.com/PerezChilli/android_kernel_xiaomi_nabu) | GPL-2.0 | 本项目使用的 nabu 内核树（分支 `nabu-w-oss-bks`） |
 
-构建产物对应源码的获取方式：上述上游仓库 + 本仓库 `patches/` 与 `configs/` 中的补丁和配置片段，
+构建产物对应源码的获取方式：上述上游仓库 + `kernel` 分支的 `patches/` 与 `configs/` 中的补丁和配置片段，
 按 [README](README.md) 记录的输入参数即可复现。GPL-2.0 第 3 条要求的源码提供义务由这两部分共同满足。
 
 ## KernelSU 与管理器
