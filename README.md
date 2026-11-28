@@ -36,6 +36,7 @@
 |---|---|
 | [nabu-battery-fix](https://github.com/xinya28/nabu-battery-fix) | 电池容量显示修正（RRO 覆盖 `battery.capacity` → 8720 mAh） |
 | [nabu-adb-enable](https://github.com/xinya28/nabu-adb-enable) | ADB 常驻开启 KSU 模块 |
+| [nabu-sched-tuning](https://github.com/xinya28/nabu-sched-tuning) | 调度与核心分配固化 KSU 模块（数值来自实测能效曲线） |
 
 ## 已知结论
 
