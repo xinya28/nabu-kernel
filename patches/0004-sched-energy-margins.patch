@@ -1,0 +1,35 @@
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index d9cc759..146facc 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -189,15 +189,25 @@ unsigned int sysctl_sched_cfs_bandwidth_slice		= 5000UL;
+  */
+ unsigned int capacity_margin				= 1280;
+ 
+-/* Migration margins */
++/*
++ * Migration margins.
++ *
++ * The sysfs view is a percentage of the destination capacity, computed as
++ * 102400 / margin, so a *larger* percentage means a *tighter* fit and the
++ * task stays where it is.  Stock values are 95% up / 85% down, i.e. 1078 and
++ * 1205.  Measurement on nabu (md5 over a tmpfs blob, one pinned core,
++ * battery-side power) shows a little core costs about a third of a gold core
++ * per unit of work, so medium utilisation is kept on the little cluster for
++ * longer: 98% up / 90% down, i.e. 1045 and 1138.
++ */
+ unsigned int sysctl_sched_capacity_margin_up[MAX_MARGIN_LEVELS] = {
+-			[0 ... MAX_MARGIN_LEVELS-1] = 1078}; /* ~5% margin */
++			[0 ... MAX_MARGIN_LEVELS-1] = 1045}; /* ~2% margin */
+ unsigned int sysctl_sched_capacity_margin_down[MAX_MARGIN_LEVELS] = {
+-			[0 ... MAX_MARGIN_LEVELS-1] = 1205}; /* ~15% margin */
++			[0 ... MAX_MARGIN_LEVELS-1] = 1138}; /* ~10% margin */
+ unsigned int sched_capacity_margin_up[NR_CPUS] = {
+-			[0 ... NR_CPUS-1] = 1078}; /* ~5% margin */
++			[0 ... NR_CPUS-1] = 1045}; /* ~2% margin */
+ unsigned int sched_capacity_margin_down[NR_CPUS] = {
+-			[0 ... NR_CPUS-1] = 1205}; /* ~15% margin */
++			[0 ... NR_CPUS-1] = 1138}; /* ~10% margin */
+ 
+ #ifdef CONFIG_SCHED_WALT
+ /* 1ms default for 20ms window size scaled to 1024 */

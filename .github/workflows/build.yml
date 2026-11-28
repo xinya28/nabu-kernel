@@ -159,6 +159,19 @@ jobs:
             grep -n 'nabu_autosleep_gate' kernel/kernel/power/Makefile
             echo "::notice::screen-gated autosleep enabled"
           fi
+          # Energy model measured on the tablet: one busy little core adds about
+          # 35 mA over idle, a gold core at 1.8 GHz about 117 mA and at 2.4 GHz
+          # about 169 mA, while md5 throughput goes 171 / 242 / 313 MB/s.  So the
+          # little cluster is roughly 2.5x cheaper per unit of work and medium
+          # utilisation should not leave it on a whim.  Stock margins are 95%
+          # up / 85% down; 98% / 90% keeps short bursts pinned to the little
+          # cluster and only pays the gold-core tax when it is really needed.
+          if [ '${{ inputs.perf_overlay }}' != 'false' ]; then
+            git -C kernel apply --verbose "$PWD/patches/0004-sched-energy-margins.patch"
+            grep -n 'MAX_MARGIN_LEVELS-1\] = 1045' kernel/kernel/sched/fair.c
+            grep -n 'NR_CPUS-1\] = 1138' kernel/kernel/sched/fair.c
+            echo "::notice::sched migration margins set to 98% up / 90% down"
+          fi
           # BakaSU installs an anonymous [ksu_driver] descriptor for whoever
           # issues reboot(2) with the magic pair, before the CAP_SYS_BOOT check.
           # GET_INFO/CHECK_SAFEMODE on that descriptor are world readable, so any
