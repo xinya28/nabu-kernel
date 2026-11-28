@@ -1,59 +1,113 @@
-# nabu kernel builds — Xiaomi Pad 5 (nabu / SM8150-AC)
+[![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
 
-4.14.180 内核与 BakaSU 管理器的构建配方。本仓库**不含**内核源码和管理器源码，
-两个 GitHub Actions workflow 在运行时拉取上游、打补丁、出包。
+# nabu 内核构建
 
-## build.yml — 内核
+面向 **小米平板 5（nabu / SM8150-AC / 骁龙 860）** 的 Linux 4.14.180 内核构建配方与配套 KSU 管理器。
 
-| 项 | 值 |
+- **目标设备**：小米平板 5（nabu），A/B 分区，bootloader 已解锁
+- **目标 ROM**：移植版 HyperOS 3 / Android 16（`OS3.0.304.0.WNSCNXM`）
+- **源码基线**：[PerezChilli/android_kernel_xiaomi_nabu](https://github.com/PerezChilli/android_kernel_xiaomi_nabu) 分支 `nabu-w-oss-bks`
+- **性质**：本仓库**不存放内核源码**，只包含 CI 流程、配置片段、补丁与打包工具；构建产物由 GitHub Actions 产出
+
+## 功能特性
+
+| 类别 | 内容 |
 |---|---|
-| 源码 | `PerezChilli/android_kernel_xiaomi_nabu`，默认分支 `nabu-w-oss-bks` |
-| 工具链 | LLVM / Clang + LLD 20.1.8 |
-| 构建入口 | `kernel/recovery/scripts/build-recovery.sh` → `out/arch/arm64/boot/Image.gz-dtb` |
-| 产物 | AnyKernel3 zip、裸 `Image`、`SHA256SUMS`、`reference-config.diff` |
-| 输入 | `source_branch`、`localversion`（默认 `-perf`）、`perf_overlay`、`autosleep_default`、`ksu_source`、`ksu_version` |
+| 熄屏休眠 | `CONFIG_PM_AUTOSLEEP=y` + 屏幕状态门控（`msm_drm_notifier`）：熄屏才允许挂起，亮屏立即禁止，避免使用中闪黑 |
+| 网络 | BBR 拥塞控制（`DEFAULT_TCP_CONG=bbr`）、`fq` / `fq_codel` / `pie` 队列调度 |
+| I/O | BFQ 可用（默认仍为 CFQ，由 ROM 决定是否切换） |
+| 编译 | `CC_OPTIMIZE_FOR_PERFORMANCE`，关闭 `DEBUG_INFO` / `SLUB_DEBUG` / `SCHED_DEBUG` / `FUNCTION_TRACER` |
+| 安全 | `/proc/kallsyms` 权限由 `0444` 收紧为 `0400`，非 root 进程无法读取内核符号 |
+| 兼容性 | 保留 `CONFIG_KPROBES`（KernelSU 依赖）与厂商模块所需的 `vermagic` 配置项 |
 
-构建时的改动只有四处：
+所有改动均通过配置文件或 `patches/` 中的补丁实现，不修改上游源码逻辑，厂商内核模块可继续加载。
+实际生效的选项请查阅构建产物中的 `reference-config.diff`。
 
-1. `patches/0001-autosleep-default-mem.patch` — `autosleep_state` 初值改为 `PM_SUSPEND_MEM`；
-2. `patches/0002-autosleep-screen-gate.patch` — 新增 `kernel/power/nabu_autosleep_gate.c`，
-   由 Makefile 追加编译项；
-3. `configs/perf.fragment` / `configs/suspend.fragment` — 追加到
-   `recovery/profile-reference.config`，再 `olddefconfig`；
-4. `/proc/kallsyms` 0444 → 0400。
+## 两种构建档位
 
-## build-manager.yml — SU 管理器
+| 档位 | 说明 | `workflow_dispatch` 输入 |
+|---|---|---|
+| **ROM 原样 + 休眠** | 仅增加熄屏休眠，其余与 ROM 自带内核一致 | `source_branch=nabu-w-oss-bks`、`perf_overlay=false`、`autosleep_default=true`、`ksu_source=tree` |
+| **性能档** | 额外启用的网络 / I/O / 编译优化 | `perf_overlay=true`，其余同上 |
 
-| 项 | 值 |
+单次构建约 18 分钟。
+
+## 已知结论
+
+以下结论均来自真机验证，可避免重复排查：
+
+1. **KernelSU 必须使用同系管理器。** 内核内置的是 ReSukiSU / BakaSU 系实现（UAPI `35286/6`）。
+   官方 KernelSU v0.9.5 在非 GKI 下不会提供 `su`；KernelSU-Next 会提示"只支持 GKI 内核"。
+2. **仅设置 `autosleep` 变量不会触发挂起**，必须经 `pm_autosleep_set_state()`。
+   且不可无条件启用：该 ROM 亮屏时不持有 wakelock，无条件 `autosleep = mem` 会导致使用中周期性熄屏。
+3. **`/proc/kallsyms` 默认为全局可读**，是 KSU 被原生检测识别的主要指纹，已在构建中收紧为 `0400`。
+4. **`suspend_stats` 中的 `fail` 与 `last_failed_dev=alarmtimer`（`-EBUSY`）属正常否决**，不是故障。
+   调试休眠时请拔掉数据线——USB 会持续持有唤醒源。
+
+## 刷写
+
+```bash
+# 临时启动验证（不写入分区，重启即恢复）
+fastboot boot boot-nabu-perf-suspend.img
+
+# 确认无误后刷入当前槽（本机为 _a）
+fastboot flash boot_a boot-nabu-perf-suspend.img
+
+# 回滚到 ROM 原厂内核
+fastboot flash boot_a <ROM 包内的 boot.img>
+```
+
+也可在 Recovery 或 KSU 管理器内刷入 `nabu-kernel-perf-suspend-anykernel3.zip`。
+
+`boot.img` 为 header v3 格式，仅替换内核，ramdisk 保持原样；`tools/repack_boot.js` 已做过去回字节校验。
+
+## 实测数据
+
+| 项目 | 结果 |
 |---|---|
-| 源码 | `Baka-SU/BakaSU`，默认 commit `cac1e793`（KSU uapi 6） |
-| 产物 | 改包名/改 label、去管理器特征、`libksud.so` → `libsyshelper.so` 的 APK |
-| 签名 | `manager-repack/ksu-manager.jks` 固定证书，只签 v2 |
-| 输入 | `package_name`、`app_name`、`upstream_ref` |
+| 权限 | `su -c id -u` → `0` |
+| 内核符号 | `ls -l /proc/kallsyms` → `-r--------` |
+| 拥塞控制 | `tcp_congestion_control` → `bbr` |
+| 熄屏门控 | `mWakefulness=Asleep` → `autosleep=mem`；`Awake` → `off` |
+| 待机电流 | 约 **18.6 mA**（拔线熄屏实测，约 5% / 天） |
+| 深度休眠 | `PM: suspend entry (deep)`，单次实测最长 2 分 31 秒 |
 
-## 两条硬约束（来自代码）
-
-1. 内核 `KernelSU/kernel/manager/apk_sign.c` 只接受**恰好一个 v2 block**：带 v1
-   （`META-INF/MANIFEST.MF`）或任何其他 block id（含 v3）的 APK 直接判非法。
-2. `/sys/power/autosleep` 只由 `CONFIG_PM_AUTOSLEEP=y` 提供，而该选项只在
-   `configs/suspend.fragment` 里——`autosleep_default=false` 的构建没有这个节点。
-   另外 `autosleep_state = PM_SUSPEND_MEM` 的初值本身不会排队挂起工作，必须经
-   `pm_autosleep_set_state()`。
-
-## 目录
+## 目录结构
 
 ```
-.github/workflows/build.yml          内核构建
-.github/workflows/build-manager.yml  管理器构建
-configs/perf.fragment                性能选项（BBR / fq_codel / BFQ / KPROBES）
-configs/suspend.fragment             CONFIG_PM_AUTOSLEEP
-patches/                             两个 autosleep 补丁
-scripts/pack-anykernel.sh            Image → AnyKernel3 zip
-tools/repack_boot.js                 替换 boot.img 内核（header v3）
-manager-repack/                      管理器改包素材（keystore、ksud、Provider、manifest 补丁）
+.github/workflows/build.yml            内核构建
+.github/workflows/build-manager.yml    配套管理器构建（改包名 / 去特征）
+configs/perf.fragment                  性能相关配置项
+configs/suspend.fragment               熄屏休眠配置项
+patches/0001-autosleep-default-mem.patch
+patches/nabu_autosleep_gate.c          屏幕状态门控实现
+tools/repack_boot.js                   替换 boot.img 中的内核
+scripts/                               AnyKernel3 打包与真机诊断脚本
+manager-repack/                        管理器重打包所需的 keystore 与补丁脚本
+docs/                                  设计与排查记录
 ```
+
+## 配套管理器
+
+内核侧 KernelSU 必须搭配同系管理器使用，详见 [发布页](https://github.com/xinya28/nabu-kernel/releases) 中的两个变体说明。
+改包名版本会移除若干可被检测的特征（原生库名、Application 类、zygote preload、启动类名、应用标签），
+代价是 LKM 模式（magica / late load）不可用；内置内核模式不受影响。
 
 ## 许可
 
-本仓库的 CI 脚本、配置片段与补丁以 GPL-2.0-only 发布（见 `LICENSE`）；
-内核与管理器源码版权归各自作者所有。
+本项目以 **GPL-2.0-only** 发布，全文见 [LICENSE](LICENSE)。
+第三方组件及其许可条款见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+## 致谢
+
+- [PerezChilli/android_kernel_xiaomi_nabu](https://github.com/PerezChilli/android_kernel_xiaomi_nabu) —— nabu 内核源码树，本项目全部构建的基础
+- [Baka-SU/BakaSU](https://github.com/Baka-SU/BakaSU) —— 内核内置的 KernelSU 下游实现及配套管理器
+- [tiann/KernelSU](https://github.com/tiann/KernelSU) —— KernelSU 上游项目
+- [osm0sis/AnyKernel3](https://github.com/osm0sis/AnyKernel3) —— AnyKernel3 刷写模板
+- [iBotPeaches/Apktool](https://github.com/iBotPeaches/Apktool) —— 资源解码与重打包
+- 以及 xda-developers、酷安等社区中公开 nabu 内核与 HyperOS 移植资料的同好
+
+## 免责声明
+
+修改内核与刷写分区存在风险，可能导致设备无法启动或数据丢失。本项目仅供个人研究与自用，
+使用前请自行备份数据，并确保已掌握回滚方法。本项目与小米、Google 及上述上游项目维护者均无隶属关系。
