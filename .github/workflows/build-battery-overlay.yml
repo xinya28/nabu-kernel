@@ -1,0 +1,185 @@
+name: build-battery-overlay
+
+# Builds the static runtime-resource-overlay that fixes the wrong battery
+# capacity reported by Xiaomi Pad 5 (nabu) / HyperOS:
+#
+#   /system/framework/framework-res.apk: res/xml/power_profile.xml
+#   <item name="battery.capacity">1000</item>   ->  8720
+#
+# The overlay is a normal RRO APK (targetPackage="android", isStatic="true")
+# that ships as /product/overlay/BatteryCapacity.apk through a KSU module.
+# framework-res.apk itself is never replaced, patched or bind-mounted.
+#
+# Why battery-overlay/framework-res-stub.apk is committed:
+#   aapt2 resolves the manifest's private framework attributes
+#   (android:targetPackage, android:isStatic, android:priority) against the
+#   framework resource table. They are not in the public android.jar, so `-I`
+#   points at a 2 MB stub that contains only resources.arsc taken from the
+#   device's own framework-res.apk. No code, no images, never installed.
+#
+# Concurrency: this workflow has its own group on purpose. build.yml
+# (nabu-kernel) is `cancel-in-progress: true` for pushes to main, so this
+# workflow must never share that group; pushes here go to the
+# `battery-overlay` branch, which build.yml does not watch.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - battery-overlay
+
+permissions:
+  contents: read
+
+concurrency:
+  group: battery-overlay
+  cancel-in-progress: false
+
+env:
+  # Personal-project key, same one as manager-repack/ (see its README).
+  KEYSTORE_PASSWORD: "n4bu-KSU-2026-7f3a9c5e"
+  KEY_ALIAS: "ksu-manager"
+  MODULE_ID: battery_capacity_fix
+  MODULE_VERSION: "1.0"
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Locate Android build-tools
+        run: |
+          set -euo pipefail
+          echo "ANDROID_HOME=${ANDROID_HOME:-}"
+          bt_dir="${ANDROID_HOME:-/usr/local/lib/android/sdk}/build-tools"
+          BT=$(ls -d "$bt_dir"/* | sort -V | tail -n1)
+          echo "build-tools: $BT"
+          test -x "$BT/aapt2"
+          test -x "$BT/apksigner"
+          test -x "$BT/zipalign"
+          echo "BT=$BT" >> "$GITHUB_ENV"
+          "$BT/aapt2" version
+          "$BT/apksigner" --version
+
+      - name: Check overlay sources
+        run: |
+          set -euo pipefail
+          grep -Fq '<item name="battery.capacity">8720</item>' \
+            battery-overlay/res/xml/power_profile.xml
+          grep -Fq 'android:targetPackage="android"' \
+            battery-overlay/AndroidManifest.xml
+          grep -Fq 'android:isStatic="true"' \
+            battery-overlay/AndroidManifest.xml
+          ls -l battery-overlay/framework-res-stub.apk battery-overlay/res/xml/power_profile.xml
+
+      - name: Compile resources
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          "$BT/aapt2" compile --dir battery-overlay/res -o build/res.zip
+          unzip -l build/res.zip
+
+      - name: Link overlay APK
+        run: |
+          set -euo pipefail
+          "$BT/aapt2" link \
+            -o build/BatteryCapacity.apk \
+            -I battery-overlay/framework-res-stub.apk \
+            --manifest battery-overlay/AndroidManifest.xml \
+            --auto-add-overlay \
+            build/res.zip
+          echo "--- manifest as linked ---"
+          "$BT/aapt2" dump xmltree --file AndroidManifest.xml build/BatteryCapacity.apk
+          # The overlay tag must have survived with the real framework attribute
+          # ids, otherwise PackageManager would ignore targetPackage/isStatic.
+          "$BT/aapt2" dump xmltree --file AndroidManifest.xml build/BatteryCapacity.apk \
+            | grep -q ':isStatic.*=true'
+          "$BT/aapt2" dump xmltree --file AndroidManifest.xml build/BatteryCapacity.apk \
+            | grep -q ':targetPackage.*"android"'
+          echo "--- resources ---"
+          "$BT/aapt2" dump resources build/BatteryCapacity.apk | tee res.txt
+          grep -q 'xml/power_profile' res.txt
+
+      - name: Align and sign (v2 only)
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          "$BT/zipalign" -f -p 4 build/BatteryCapacity.apk dist/BatteryCapacity-unaligned.apk
+          "$BT/apksigner" sign \
+            --ks manager-repack/ksu-manager.jks \
+            --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass "pass:$KEYSTORE_PASSWORD" \
+            --key-pass "pass:$KEYSTORE_PASSWORD" \
+            --min-sdk-version 26 \
+            --v1-signing-enabled false \
+            --v2-signing-enabled true \
+            --v3-signing-enabled false \
+            --v4-signing-enabled false \
+            --out dist/BatteryCapacity.apk \
+            dist/BatteryCapacity-unaligned.apk
+          rm -f dist/BatteryCapacity-unaligned.apk
+          ls -l dist/BatteryCapacity.apk
+
+      - name: Verify APK
+        run: |
+          set -euo pipefail
+          "$BT/apksigner" verify --verbose --print-certs dist/BatteryCapacity.apk | tee verify.txt
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" verify.txt
+          grep -q "Verified using v1 scheme (JAR signing): false" verify.txt
+          grep -q "Verifies" verify.txt
+          echo "--- apk contents ---"
+          unzip -l dist/BatteryCapacity.apk
+
+      - name: Pack KSU module zip
+        run: |
+          set -euo pipefail
+          rm -rf module
+          mkdir -p module/overlay
+          cp battery-overlay/module/module.prop \
+             battery-overlay/module/customize.sh \
+             battery-overlay/module/post-fs-data.sh \
+             battery-overlay/module/skip_mount \
+             module/
+          chmod 0755 module/customize.sh module/post-fs-data.sh
+          cp dist/BatteryCapacity.apk module/overlay/BatteryCapacity.apk
+          chmod 0644 module/module.prop module/skip_mount module/overlay/BatteryCapacity.apk
+          cd module
+          zip -r9 "../dist/battery_capacity_fix-${MODULE_VERSION}.zip" . -x '.*'
+          cd ..
+          unzip -l "dist/battery_capacity_fix-${MODULE_VERSION}.zip"
+
+      - name: Checksums and summary
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum BatteryCapacity.apk "battery_capacity_fix-${MODULE_VERSION}.zip" | tee sha256sums.txt
+          cp sha256sums.txt "$GITHUB_WORKSPACE/dist/sha256sums.txt"
+          {
+            echo "### Battery capacity overlay"
+            echo ""
+            echo "| item | value |"
+            echo "|---|---|"
+            echo "| APK | \`BatteryCapacity.apk\` ($(stat -c%s BatteryCapacity.apk) bytes) |"
+            echo "| APK sha256 | \`$(sha256sum BatteryCapacity.apk | cut -d' ' -f1)\` |"
+            echo "| module zip | \`battery_capacity_fix-${MODULE_VERSION}.zip\` ($(stat -c%s "battery_capacity_fix-${MODULE_VERSION}.zip") bytes) |"
+            echo "| module zip sha256 | \`$(sha256sum "battery_capacity_fix-${MODULE_VERSION}.zip" | cut -d' ' -f1)\` |"
+            echo ""
+            echo "Install: push the module zip to the device and either install it from"
+            echo "the KSU manager or unzip it to /data/adb/modules/battery_capacity_fix,"
+            echo "then reboot. Remove the module directory and reboot to roll back."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: battery-overlay-${{ github.run_number }}
+          path: |
+            dist/BatteryCapacity.apk
+            dist/battery_capacity_fix-*.zip
+            dist/sha256sums.txt
+          retention-days: 30
+          if-no-files-found: error

@@ -1,0 +1,2 @@
+# This module mounts its own overlay in post-fs-data.sh, so KernelSU must not
+# try to mount anything for it.
