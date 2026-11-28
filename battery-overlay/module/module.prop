@@ -1,6 +1,0 @@
-id=battery_capacity_fix
-name=电池容量修正
-version=1.0
-versionCode=1
-author=xinya28
-description=静态 RRO 覆盖 framework-res 的 res/xml/power_profile，把 battery.capacity 从 1000 修正为 8720 mAh。不改动 framework-res.apk 本体，卸载模块并重启即完全恢复。
