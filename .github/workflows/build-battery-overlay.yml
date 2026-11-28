@@ -157,7 +157,6 @@ jobs:
           set -euo pipefail
           cd dist
           sha256sum BatteryCapacity.apk "battery_capacity_fix-${MODULE_VERSION}.zip" | tee sha256sums.txt
-          cp sha256sums.txt "$GITHUB_WORKSPACE/dist/sha256sums.txt"
           {
             echo "### Battery capacity overlay"
             echo ""
