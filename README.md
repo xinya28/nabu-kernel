@@ -13,7 +13,7 @@
 
 </div>
 
-小米平板 5（nabu）在移植版 HyperOS 3 / Android 16 上的内核构建与 KernelSU 管理器配方。
+小米平板 5（nabu）移植版 HyperOS 3 / Android 16 优化.
 本仓库只做索引，实际内容按分支划分。
 
 ## 分支
