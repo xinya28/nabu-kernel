@@ -100,8 +100,9 @@ docs/                                  设计与排查记录
 battery-overlay/                       电池容量 RRO（已拆分到独立仓库 nabu-battery-fix，此处为原副本）
 ```
 
-> `.github/workflows/build-manager.yml` 与 `manager-repack/` 已迁到 `su-manager` 分支，
-> `battery-overlay/` 已拆分为独立仓库 [nabu-battery-fix](https://github.com/xinya28/nabu-battery-fix)。
+> 本分支保留了拆分前的完整快照（含 `build-manager.yml` 与 `manager-repack/`、`battery-overlay/` 的原副本）。
+> 管理器流水线以 `su-manager` 分支为准，电池容量修正以独立仓库
+> [nabu-battery-fix](https://github.com/xinya28/nabu-battery-fix) 为准。
 
 ## 配套管理器
 
