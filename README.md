@@ -1,8 +1,22 @@
-[![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
+<div align="center">
 
-# nabu 内核构建
+# nabu-HyperOS3-A16 · kernel
 
-面向 **小米平板 5（nabu / SM8150-AC / 骁龙 860）** 的 Linux 4.14.180 内核构建配方与配套 KSU 管理器。
+### 小米平板 5（nabu）HyperOS 3 / Android 16 的内核构建配方
+
+![powered by dsh](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)
+![device](https://img.shields.io/badge/device-nabu_%2F_Xiaomi_Pad_5-orange?style=flat-square)
+![source](https://img.shields.io/badge/source-HyperOS_3_%2F_Android_16-blue?style=flat-square)
+![kernel](https://img.shields.io/badge/kernel-4.14.180_%2B_nabu_drivers-blue?style=flat-square)
+![CI](https://img.shields.io/badge/CI-GitHub_Actions-green?style=flat-square)
+![license](https://img.shields.io/badge/license-GPL--2.0--only-orange?style=flat-square)
+
+</div>
+
+本分支是 `nabu-HyperOS3-A16` 的**内核分支**，存放内核构建的全部内容。项目总览、产物下载与刷写回滚说明见
+`main` 分支，管理器的改包/去特征流水线见 `su-manager` 分支。
+
+面向 **小米平板 5（nabu / SM8150-AC / 骁龙 860）** 的 Linux 4.14.180 内核构建配方。
 
 - **目标设备**：小米平板 5（nabu），A/B 分区，bootloader 已解锁
 - **目标 ROM**：移植版 HyperOS 3 / Android 16（`OS3.0.304.0.WNSCNXM`）
@@ -76,20 +90,23 @@ fastboot flash boot_a <ROM 包内的 boot.img>
 
 ```
 .github/workflows/build.yml            内核构建
-.github/workflows/build-manager.yml    配套管理器构建（改包名 / 去特征）
 configs/perf.fragment                  性能相关配置项
 configs/suspend.fragment               熄屏休眠配置项
 patches/0001-autosleep-default-mem.patch
 patches/nabu_autosleep_gate.c          屏幕状态门控实现
 tools/repack_boot.js                   替换 boot.img 中的内核
 scripts/                               AnyKernel3 打包与真机诊断脚本
-manager-repack/                        管理器重打包所需的 keystore 与补丁脚本
 docs/                                  设计与排查记录
+battery-overlay/                       电池容量 RRO（已拆分到独立仓库 nabu-battery-fix，此处为原副本）
 ```
+
+> `.github/workflows/build-manager.yml` 与 `manager-repack/` 已迁到 `su-manager` 分支，
+> `battery-overlay/` 已拆分为独立仓库 [nabu-battery-fix](https://github.com/xinya28/nabu-battery-fix)。
 
 ## 配套管理器
 
-内核侧 KernelSU 必须搭配同系管理器使用，详见 [发布页](https://github.com/xinya28/nabu-kernel/releases) 中的两个变体说明。
+内核侧 KernelSU 必须搭配同系管理器使用，详见 [发布页](https://github.com/xinya28/nabu-HyperOS3-A16/releases) 中的两个变体说明；
+管理器改包/去特征流水线在 `su-manager` 分支。
 改包名版本会移除若干可被检测的特征（原生库名、Application 类、zygote preload、启动类名、应用标签），
 代价是 LKM 模式（magica / late load）不可用；内置内核模式不受影响。
 
